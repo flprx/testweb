@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Air Graffiti</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; width: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+    background: #0a0a0a;
+    color: #fff;
+    overflow: hidden;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /* ======================================================
+     CANVAS / DISPLAY MODE (computer, LED wall)
+     ====================================================== */
+  #display-screen { position: fixed; inset: 0; display: none; }
+  #display-screen.active { display: block; }
+
+  #spray-canvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+    background: #1a1a1a;
+  }
+
+  #crosshair {
+    position: fixed;
+    pointer-events: none;
+    width: 36px;
+    height: 36px;
+    margin-left: -18px;
+    margin-top: -18px;
+    border: 2px solid rgba(255,255,255,0.5);
+    border-radius: 50%;
+    opacity: 0;
+    transition: opacity 0.2s;
+    mix-blend-mode: difference;
+  }
+  #crosshair.visible { opacity: 1; }
+  #crosshair::after {
+    content: '';
+    position: absolute;
+    left: 50%; top: 50%;
+    width: 4px; height: 4px;
+    margin: -2px 0 0 -2px;
+    background: rgba(255,255,255,0.8);
+    border-radius: 50%;
+  }
+
+  #pair-panel {
+    position: fixed; top: 20px; right: 20px;
+    background: rgba(15,15,15,0.92);
+    padding: 22px;
+    border-radius: 18px;
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(255,255,255,0.08);
+    max-width: 260px;
+    transition: opacity 0.4s;
+  }
+  #pair-panel.connected { opacity: 0.15; }
+  #pair-panel.connected:hover { opacity: 1; }
+  #pair-panel h3 { font-size: 13px; font-weight: 500; margin-bottom: 14px; opacity: 0.7; letter-spacing: 0.3px; }
+  #qrcode { background: #fff; padding: 10px; border-radius: 10px; display: flex; justify-content: center; }
+  #qrcode img, #qrcode canvas { display: block; }
+  #pair-url { font-size: 10px; opacity: 0.45; word-break: break-all; margin-top: 12px; font-family: ui-monospace, Menlo, monospace; line-height: 1.4; }
+  #status-pill {
+    display: inline-block; padding: 5px 12px;
+    border-radius: 100px; font-size: 11px;
+    margin-top: 12px;
+    background: rgba(255,255,255,0.08);
+    letter-spacing: 0.3px;
+  }
+  #status-pill.connected { background: rgba(60, 200, 110, 0.25); color: #6ee5a0; }
+  #status-pill.error { background: rgba(220, 80, 80, 0.25); color: #ff8888; }
+
+  #display-toolbar {
+    position: fixed; bottom: 20px; left: 50%;
+    transform: translateX(-50%);
+    background: rgba(15,15,15,0.92);
+    backdrop-filter: blur(20px);
+    padding: 8px;
+    border-radius: 100px;
+    display: flex; gap: 6px;
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  .tool-btn {
+    background: rgba(255,255,255,0.08);
+    border: none; color: #fff;
+    padding: 11px 20px;
+    border-radius: 100px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: background 0.15s;
+    font-family: inherit;
+  }
+  .tool-btn:hover { background: rgba(255,255,255,0.16); }
+  .tool-btn:active { background: rgba(255,255,255,0.24); }
+
+  /* ======================================================
+     CONTROLLER MODE (phone)
+     ====================================================== */
+  #controller-screen {
+    position: fixed; inset: 0;
+    display: none;
+    flex-direction: column;
+    padding: max(env(safe-area-inset-top), 14px) 16px max(env(safe-area-inset-bottom), 14px);
+  }
+  #controller-screen.active { display: flex; }
+
+  .ctrl-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 6px 4px 14px;
+  }
+  .ctrl-title {
+    font-size: 12px; opacity: 0.5;
+    letter-spacing: 1.5px; text-transform: uppercase;
+  }
+  .ctrl-status {
+    font-size: 11px;
+    padding: 5px 11px;
+    border-radius: 100px;
+    background: rgba(255,255,255,0.08);
+    letter-spacing: 0.3px;
+  }
+  .ctrl-status.connected { background: rgba(60, 200, 110, 0.25); color: #6ee5a0; }
+  .ctrl-status.error { background: rgba(220, 80, 80, 0.25); color: #ff8888; }
+
+  #enable-sensors-overlay {
+    position: fixed; inset: 0;
+    background: #0a0a0a;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 24px; padding: 40px;
+    z-index: 100;
+    text-align: center;
+  }
+  #enable-sensors-overlay h1 { font-size: 24px; font-weight: 500; }
+  #enable-sensors-overlay p { opacity: 0.55; max-width: 320px; line-height: 1.5; font-size: 14px; }
+  #enable-sensors-btn {
+    background: #fff; color: #000;
+    border: none;
+    padding: 16px 40px;
+    font-size: 15px;
+    border-radius: 100px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 8px;
+    font-family: inherit;
+  }
+
+  .ctrl-settings {
+    display: flex; flex-direction: column; gap: 12px;
+    padding: 8px 6px;
+  }
+  .setting-row { display: flex; align-items: center; gap: 14px; }
+  .setting-row label {
+    font-size: 12px; opacity: 0.55;
+    flex: 0 0 88px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  .setting-row input[type=range] {
+    flex: 1; height: 4px;
+    -webkit-appearance: none; appearance: none;
+    background: rgba(255,255,255,0.15);
+    border-radius: 4px;
+    outline: none;
+  }
+  .setting-row input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 22px; height: 22px;
+    background: #fff;
+    border-radius: 50%;
+    cursor: pointer;
+  }
+  .setting-row input[type=color] {
+    width: 56px; height: 36px;
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.15);
+    background: transparent;
+    cursor: pointer;
+    padding: 0;
+  }
+  .setting-value {
+    font-size: 12px; opacity: 0.6;
+    width: 32px; text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-family: ui-monospace, Menlo, monospace;
+  }
+
+  #spray-button {
+    flex: 1;
+    margin: 14px 0;
+    border-radius: 28px;
+    background: linear-gradient(180deg, #1f1f1f 0%, #141414 100%);
+    border: 1px solid rgba(255,255,255,0.08);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    cursor: pointer;
+    user-select: none;
+    transition: transform 0.08s, background 0.08s;
+    position: relative;
+    overflow: hidden;
+  }
+  #spray-button.active {
+    background: radial-gradient(circle at center, var(--spray-color, #ff2266) 0%, #800022 100%);
+    transform: scale(0.985);
+  }
+  #spray-button .icon {
+    width: 72px; height: 72px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.08);
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.1s, transform 0.1s;
+  }
+  #spray-button.active .icon {
+    background: rgba(255,255,255,0.95);
+    transform: scale(1.1);
+  }
+  #spray-button .icon::before {
+    content: '';
+    width: 22px; height: 22px;
+    background: currentColor;
+    border-radius: 50%;
+  }
+  #spray-button .label {
+    font-size: 12px;
+    opacity: 0.45;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+  #spray-button.active .label { opacity: 0.9; }
+
+  .ctrl-actions { display: flex; gap: 8px; }
+  .ctrl-actions .tool-btn { flex: 1; padding: 14px; font-size: 13px; }
+</style>
+</head>
+<body>
+
+<!-- ===== DISPLAY (computer) ===== -->
+<div id="display-screen">
+  <canvas id="spray-canvas"></canvas>
+  <div id="crosshair"></div>
+  <div id="pair-panel">
+    <h3>Accoppia il telefono</h3>
+    <div id="qrcode"></div>
+    <div id="pair-url"></div>
+    <div id="status-pill">In attesa…</div>
+  </div>
+  <div id="display-toolbar">
+    <button class="tool-btn" id="clear-btn">Pulisci muro</button>
+    <button class="tool-btn" id="save-btn">Salva PNG</button>
+    <button class="tool-btn" id="fullscreen-btn">Fullscreen</button>
+  </div>
+</div>
+
+<!-- ===== CONTROLLER (phone) ===== -->
+<div id="controller-screen">
+  <div id="enable-sensors-overlay">
+    <h1>Bomboletta nell'aria</h1>
+    <p>Tocca per abilitare i sensori del telefono. L'orientamento controlla la posizione dello spray, il pulsante grande spruzza.</p>
+    <button id="enable-sensors-btn">Abilita sensori</button>
+  </div>
+
+  <div class="ctrl-header">
+    <div class="ctrl-title">Bomboletta</div>
+    <div class="ctrl-status" id="ctrl-status">Connessione…</div>
+  </div>
+
+  <div class="ctrl-settings">
+    <div class="setting-row">
+      <label>Colore</label>
+      <input type="color" id="color-picker" value="#ff2266">
+    </div>
+    <div class="setting-row">
+      <label>Ampiezza</label>
+      <input type="range" id="sensitivity" min="20" max="140" value="60">
+      <div class="setting-value" id="sensitivity-val">60°</div>
+    </div>
+    <div class="setting-row">
+      <label>Densità</label>
+      <input type="range" id="density" min="5" max="80" value="25">
+      <div class="setting-value" id="density-val">25</div>
+    </div>
+  </div>
+
+  <div id="spray-button">
+    <div class="icon"></div>
+    <div class="label">Tieni premuto</div>
+  </div>
+
+  <div class="ctrl-actions">
+    <button class="tool-btn" id="recalibrate-btn">Centra</button>
+    <button class="tool-btn" id="ctrl-clear-btn">Pulisci muro</button>
+  </div>
+</div>
+
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+(function() {
+  'use strict';
+
+  const url = new URL(window.location.href);
+  const peerIdParam = url.searchParams.get('peer');
+  const isController = !!peerIdParam;
+
+  if (isController) initController(peerIdParam);
+  else initDisplay();
+
+  // ==========================================================
+  // DISPLAY MODE
+  // ==========================================================
+  function initDisplay() {
+    document.getElementById('display-screen').classList.add('active');
+
+    const canvas = document.getElementById('spray-canvas');
+    const ctx = canvas.getContext('2d');
+    const statusPill = document.getElementById('status-pill');
+    const pairPanel = document.getElementById('pair-panel');
+    const crosshair = document.getElementById('crosshair');
+
+    const dpr = window.devicePixelRatio || 1;
+    let logicalW = 0, logicalH = 0;
+
+    function resize() {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      logicalW = w; logicalH = h;
+
+      // Preserve current artwork on resize
+      let snap = null;
+      if (canvas.width > 0) {
+        snap = document.createElement('canvas');
+        snap.width = canvas.width;
+        snap.height = canvas.height;
+        snap.getContext('2d').drawImage(canvas, 0, 0);
+      }
+
+      canvas.width = w * dpr;
+      canvas.height = h * dpr;
+      canvas.style.width = w + 'px';
+      canvas.style.height = h + 'px';
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      ctx.fillStyle = '#1a1a1a';
+      ctx.fillRect(0, 0, w, h);
+      if (snap) ctx.drawImage(snap, 0, 0, w, h);
+    }
+    resize();
+    window.addEventListener('resize', resize);
+
+    // PeerJS
+    const peerId = 'graffiti-' + Math.random().toString(36).slice(2, 9);
+    const peer = new Peer(peerId, { debug: 1 });
+    let activeConn = null;
+    let lastPoseTime = 0;
+    let crosshairHideTimer = null;
+
+    peer.on('open', (id) => {
+      const pairUrl = `${window.location.origin}${window.location.pathname}?peer=${id}`;
+      document.getElementById('pair-url').textContent = pairUrl;
+      new QRCode(document.getElementById('qrcode'), {
+        text: pairUrl,
+        width: 170,
+        height: 170,
+        colorDark: '#000',
+        colorLight: '#fff',
+        correctLevel: QRCode.CorrectLevel.M
+      });
+    });
+
+    peer.on('error', (err) => {
+      console.error('Peer error:', err);
+      statusPill.textContent = 'Errore: ' + err.type;
+      statusPill.classList.add('error');
+    });
+
+    peer.on('connection', (conn) => {
+      activeConn = conn;
+      conn.on('open', () => {
+        statusPill.textContent = 'Connesso';
+        statusPill.classList.remove('error');
+        statusPill.classList.add('connected');
+        pairPanel.classList.add('connected');
+      });
+      conn.on('close', () => {
+        statusPill.textContent = 'Disconnesso';
+        statusPill.classList.remove('connected');
+        pairPanel.classList.remove('connected');
+        crosshair.classList.remove('visible');
+        if (activeConn === conn) activeConn = null;
+      });
+      conn.on('data', (msg) => {
+        if (!msg || typeof msg !== 'object') return;
+        if (msg.type === 'frame') {
+          updateCrosshair(msg.x, msg.y);
+          if (msg.spraying) paintSpray(msg.x, msg.y, msg.color, msg.density);
+        } else if (msg.type === 'clear') {
+          clearCanvas();
+        }
+      });
+    });
+
+    function updateCrosshair(xNorm, yNorm) {
+      const cx = xNorm * logicalW;
+      const cy = yNorm * logicalH;
+      crosshair.style.left = cx + 'px';
+      crosshair.style.top = cy + 'px';
+      crosshair.classList.add('visible');
+      lastPoseTime = performance.now();
+      if (crosshairHideTimer) clearTimeout(crosshairHideTimer);
+      crosshairHideTimer = setTimeout(() => crosshair.classList.remove('visible'), 800);
+    }
+
+    function gauss() {
+      let u = 0, v = 0;
+      while (u === 0) u = Math.random();
+      while (v === 0) v = Math.random();
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+    }
+
+    function paintSpray(xNorm, yNorm, color, density) {
+      const cx = xNorm * logicalW;
+      const cy = yNorm * logicalH;
+      const sigma = 14;
+      const n = Math.max(1, Math.min(120, density || 25));
+
+      ctx.fillStyle = color || '#ff2266';
+      for (let i = 0; i < n; i++) {
+        const px = cx + gauss() * sigma;
+        const py = cy + gauss() * sigma;
+        const radius = 0.8 + Math.random() * 1.4;
+        ctx.globalAlpha = 0.06 + Math.random() * 0.09;
+        ctx.beginPath();
+        ctx.arc(px, py, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // Occasional drips for realism
+      if (Math.random() < 0.012 * (n / 25)) {
+        const dripLen = 6 + Math.random() * 20;
+        ctx.globalAlpha = 0.18;
+        ctx.fillRect(cx - 0.6, cy, 1.2, dripLen);
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    function clearCanvas() {
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.fillStyle = '#1a1a1a';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.restore();
+    }
+
+    document.getElementById('clear-btn').addEventListener('click', clearCanvas);
+    document.getElementById('save-btn').addEventListener('click', () => {
+      const link = document.createElement('a');
+      link.download = `graffiti-${Date.now()}.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    });
+    document.getElementById('fullscreen-btn').addEventListener('click', () => {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else document.documentElement.requestFullscreen().catch(() => {});
+    });
+  }
+
+  // ==========================================================
+  // CONTROLLER MODE
+  // ==========================================================
+  function initController(targetPeerId) {
+    document.getElementById('controller-screen').classList.add('active');
+
+    const statusEl = document.getElementById('ctrl-status');
+    const sprayBtn = document.getElementById('spray-button');
+    const colorPicker = document.getElementById('color-picker');
+    const sensitivityEl = document.getElementById('sensitivity');
+    const sensitivityVal = document.getElementById('sensitivity-val');
+    const densityEl = document.getElementById('density');
+    const densityVal = document.getElementById('density-val');
+    const enableOverlay = document.getElementById('enable-sensors-overlay');
+    const enableBtn = document.getElementById('enable-sensors-btn');
+    const recalBtn = document.getElementById('recalibrate-btn');
+    const clearBtn = document.getElementById('ctrl-clear-btn');
+
+    let isSpraying = false;
+    let conn = null;
+    let sensorsReady = false;
+    let calibAlpha = null, calibBeta = null;
+    let currentAlpha = null, currentBeta = null;
+    let smoothedX = 0.5, smoothedY = 0.5;
+
+    // Live slider readouts
+    const updateSettingDisplays = () => {
+      sensitivityVal.textContent = sensitivityEl.value + '°';
+      densityVal.textContent = densityEl.value;
+      sprayBtn.style.setProperty('--spray-color', colorPicker.value);
+    };
+    sensitivityEl.addEventListener('input', updateSettingDisplays);
+    densityEl.addEventListener('input', updateSettingDisplays);
+    colorPicker.addEventListener('input', updateSettingDisplays);
+    updateSettingDisplays();
+
+    // PeerJS
+    const myId = 'phone-' + Math.random().toString(36).slice(2, 9);
+    const peer = new Peer(myId, { debug: 1 });
+
+    peer.on('open', () => {
+      conn = peer.connect(targetPeerId, { reliable: false, serialization: 'json' });
+      conn.on('open', () => {
+        statusEl.textContent = 'Connesso';
+        statusEl.classList.remove('error');
+        statusEl.classList.add('connected');
+      });
+      conn.on('close', () => {
+        statusEl.textContent = 'Disconnesso';
+        statusEl.classList.remove('connected');
+      });
+      conn.on('error', (err) => {
+        statusEl.textContent = 'Errore conn';
+        statusEl.classList.add('error');
+        console.error(err);
+      });
+    });
+    peer.on('error', (err) => {
+      statusEl.textContent = 'Errore peer';
+      statusEl.classList.add('error');
+      console.error(err);
+    });
+
+    // iOS requires explicit permission for DeviceOrientation
+    enableBtn.addEventListener('click', async () => {
+      try {
+        if (typeof DeviceOrientationEvent !== 'undefined' &&
+            typeof DeviceOrientationEvent.requestPermission === 'function') {
+          const res = await DeviceOrientationEvent.requestPermission();
+          if (res !== 'granted') {
+            alert('Permesso sensori negato. Senza non funziona.');
+            return;
+          }
+        }
+        startSensors();
+        enableOverlay.style.display = 'none';
+        // Try fullscreen (best effort)
+        if (document.documentElement.requestFullscreen) {
+          document.documentElement.requestFullscreen().catch(() => {});
+        }
+      } catch (e) {
+        console.error(e);
+        alert('Impossibile abilitare i sensori: ' + e.message);
+      }
+    });
+
+    function startSensors() {
+      sensorsReady = true;
+      window.addEventListener('deviceorientation', (e) => {
+        if (e.alpha === null) return;
+        currentAlpha = e.alpha;
+        currentBeta = e.beta;
+        if (calibAlpha === null) {
+          calibAlpha = currentAlpha;
+          calibBeta = currentBeta;
+          smoothedX = 0.5; smoothedY = 0.5;
+        }
+      });
+    }
+
+    function recalibrate() {
+      if (currentAlpha !== null) {
+        calibAlpha = currentAlpha;
+        calibBeta = currentBeta;
+        smoothedX = 0.5; smoothedY = 0.5;
+      }
+      recalBtn.style.background = 'rgba(60,200,110,0.4)';
+      setTimeout(() => { recalBtn.style.background = ''; }, 250);
+    }
+    recalBtn.addEventListener('click', recalibrate);
+
+    clearBtn.addEventListener('click', () => {
+      if (conn && conn.open) conn.send({ type: 'clear' });
+    });
+
+    // Spray button: touch + mouse (for desktop testing)
+    function startSpray(e) { e.preventDefault(); isSpraying = true; sprayBtn.classList.add('active'); }
+    function stopSpray() { isSpraying = false; sprayBtn.classList.remove('active'); }
+    sprayBtn.addEventListener('touchstart', startSpray, { passive: false });
+    sprayBtn.addEventListener('touchend', stopSpray);
+    sprayBtn.addEventListener('touchcancel', stopSpray);
+    sprayBtn.addEventListener('mousedown', startSpray);
+    window.addEventListener('mouseup', stopSpray);
+
+    // Shortest signed angular diff in [-180, 180]
+    function angleDiff(a, b) {
+      let d = a - b;
+      while (d > 180) d -= 360;
+      while (d < -180) d += 360;
+      return d;
+    }
+
+    // Main loop: compute pose, send frame
+    function loop() {
+      if (sensorsReady && calibAlpha !== null && currentAlpha !== null) {
+        const fov = parseFloat(sensitivityEl.value);
+        const dAlpha = angleDiff(currentAlpha, calibAlpha);
+        const dBeta = currentBeta - calibBeta;
+
+        // Mapping: rotating phone right (alpha +) -> x +
+        //          tilting top forward (beta +) -> y - (cursor goes up)
+        let x = 0.5 + dAlpha / fov;
+        let y = 0.5 - dBeta / fov;
+        x = Math.max(0, Math.min(1, x));
+        y = Math.max(0, Math.min(1, y));
+
+        const k = 0.35; // low-pass smoothing factor
+        smoothedX += (x - smoothedX) * k;
+        smoothedY += (y - smoothedY) * k;
+
+        if (conn && conn.open) {
+          conn.send({
+            type: 'frame',
+            x: smoothedX,
+            y: smoothedY,
+            spraying: isSpraying,
+            color: colorPicker.value,
+            density: parseInt(densityEl.value, 10)
+          });
+        }
+      }
+      requestAnimationFrame(loop);
+    }
+    requestAnimationFrame(loop);
+  }
+})();
+</script>
+</body>
+</html>
