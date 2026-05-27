@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<title>Air Graffiti v3</title>
+<title>Air Graffiti v6</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
   html, body { height: 100%; width: 100%; }
@@ -251,11 +251,32 @@
 
   .ctrl-actions { display: flex; gap: 8px; }
   .ctrl-actions .tool-btn { flex: 1; padding: 14px; font-size: 13px; }
+
+  .axis-row { display: flex; gap: 8px; padding: 4px 6px 4px; }
+  .axis-toggle {
+    flex: 1;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.55);
+    padding: 9px 6px;
+    border-radius: 12px;
+    font-size: 11px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: 0.15s;
+    font-family: inherit;
+  }
+  .axis-toggle.on {
+    background: rgba(80, 160, 255, 0.22);
+    color: #9fc7ff;
+    border-color: rgba(80, 160, 255, 0.4);
+  }
 </style>
 </head>
 <body>
 
-<div class="version-badge">v3</div>
+<div class="version-badge">v6</div>
 
 <!-- ===== DISPLAY (computer) ===== -->
 <div id="display-screen">
@@ -278,8 +299,8 @@
 <div id="controller-screen">
   <div id="enable-sensors-overlay">
     <h1>Bomboletta nell'aria</h1>
-    <p>Tocca per abilitare i sensori del telefono. L'orientamento controlla la posizione dello spray, il pulsante grande spruzza.</p>
-    <button id="enable-sensors-btn">Abilita sensori</button>
+    <p>Tocca per abilitare il giroscopio. La rotazione del polso controlla la posizione dello spray, il pulsante grande spruzza. Se ti perdi premi "Centra".</p>
+    <button id="enable-sensors-btn">Abilita giroscopio</button>
   </div>
 
   <div class="ctrl-header">
@@ -307,6 +328,12 @@
   <div id="spray-button">
     <div class="icon"></div>
     <div class="label">Tieni premuto</div>
+  </div>
+
+  <div class="axis-row">
+    <button class="axis-toggle" id="invert-x-btn">Inverti X</button>
+    <button class="axis-toggle" id="invert-y-btn">Inverti Y</button>
+    <button class="axis-toggle" id="swap-axis-btn">Asse Y alt.</button>
   </div>
 
   <div class="ctrl-actions">
@@ -388,7 +415,7 @@
     window.addEventListener('resize', resize);
 
     // PeerJS — peer ID persisted in localStorage so reloads don't break the QR
-    console.log('[display] booting v3');
+    console.log('[display] booting v6');
     statusPill.textContent = 'Registrazione…';
     let peerId = null;
     try { peerId = localStorage.getItem('airGraffitiPeerId'); } catch (e) {}
@@ -432,6 +459,27 @@
       console.log('[display] incoming connection from', conn.peer);
       activeConn = conn;
       statusPill.textContent = 'Telefono trovato, handshake…';
+
+      // Deep ICE diagnostics
+      const pc = conn.peerConnection;
+      if (pc) {
+        pc.addEventListener('iceconnectionstatechange', () => {
+          console.log('[display] ICE state:', pc.iceConnectionState);
+          statusPill.textContent = 'ICE: ' + pc.iceConnectionState;
+        });
+        pc.addEventListener('connectionstatechange', () => {
+          console.log('[display] PC state:', pc.connectionState);
+        });
+        pc.addEventListener('icecandidate', (e) => {
+          if (e.candidate) {
+            const c = e.candidate;
+            console.log('[display] ICE cand:', c.type || '?', c.protocol, c.address || c.candidate);
+          } else {
+            console.log('[display] ICE gathering complete');
+          }
+        });
+      }
+
       conn.on('open', () => {
         statusPill.textContent = 'Connesso';
         statusPill.classList.remove('error');
@@ -543,13 +591,53 @@
     const enableBtn = document.getElementById('enable-sensors-btn');
     const recalBtn = document.getElementById('recalibrate-btn');
     const clearBtn = document.getElementById('ctrl-clear-btn');
+    const invertXBtn = document.getElementById('invert-x-btn');
+    const invertYBtn = document.getElementById('invert-y-btn');
+    const swapAxisBtn = document.getElementById('swap-axis-btn');
 
     let isSpraying = false;
     let conn = null;
     let sensorsReady = false;
-    let calibAlpha = null, calibBeta = null;
-    let currentAlpha = null, currentBeta = null;
+    // Integrated angles (deg) since calibration.
+    // Phone held vertically (screen toward face, top up):
+    //   - wrist yaw (left/right)  -> device Y axis  -> rotationRate.gamma -> accumYaw
+    //   - wrist pitch (up/down)   -> device X axis  -> rotationRate.beta  -> accumPitch
+    //   - wrist roll (twist)      -> device Z axis  -> rotationRate.alpha -> accumRoll (unused unless Y-alt)
+    let accumYaw = 0, accumPitch = 0, accumRoll = 0;
+    let lastMotionTime = null;
     let smoothedX = 0.5, smoothedY = 0.5;
+
+    // Axis settings persisted across sessions
+    function loadPref(key, def) {
+      try { const v = localStorage.getItem(key); return v === null ? def : v === '1'; }
+      catch (e) { return def; }
+    }
+    function savePref(key, val) {
+      try { localStorage.setItem(key, val ? '1' : '0'); } catch (e) {}
+    }
+    let invertX = loadPref('agInvX', false);
+    let invertY = loadPref('agInvY', false);
+    let useGammaForY = loadPref('agSwapY', false);
+
+    function refreshToggleUI() {
+      invertXBtn.classList.toggle('on', invertX);
+      invertYBtn.classList.toggle('on', invertY);
+      swapAxisBtn.classList.toggle('on', useGammaForY);
+    }
+    refreshToggleUI();
+
+    invertXBtn.addEventListener('click', () => {
+      invertX = !invertX; savePref('agInvX', invertX); refreshToggleUI();
+    });
+    invertYBtn.addEventListener('click', () => {
+      invertY = !invertY; savePref('agInvY', invertY); refreshToggleUI();
+    });
+    swapAxisBtn.addEventListener('click', () => {
+      useGammaForY = !useGammaForY; savePref('agSwapY', useGammaForY); refreshToggleUI();
+      // Re-zero on axis swap so we don't keep the previous source's accumulated value
+      accumYaw = 0; accumPitch = 0; accumRoll = 0;
+      smoothedX = 0.5; smoothedY = 0.5;
+    });
 
     // Live slider readouts
     const updateSettingDisplays = () => {
@@ -563,7 +651,7 @@
     updateSettingDisplays();
 
     // PeerJS
-    console.log('[phone] booting v3, target:', targetPeerId);
+    console.log('[phone] booting v6, target:', targetPeerId);
     statusEl.textContent = 'Registrazione…';
     const myId = 'phone-' + Math.random().toString(36).slice(2, 9);
     const peer = new Peer(myId, PEER_CONFIG);
@@ -599,14 +687,14 @@
       statusEl.classList.add('error');
     });
 
-    // iOS requires explicit permission for DeviceOrientation
+    // iOS requires explicit permission for DeviceMotion (gyroscope)
     enableBtn.addEventListener('click', async () => {
       try {
-        if (typeof DeviceOrientationEvent !== 'undefined' &&
-            typeof DeviceOrientationEvent.requestPermission === 'function') {
-          const res = await DeviceOrientationEvent.requestPermission();
+        if (typeof DeviceMotionEvent !== 'undefined' &&
+            typeof DeviceMotionEvent.requestPermission === 'function') {
+          const res = await DeviceMotionEvent.requestPermission();
           if (res !== 'granted') {
-            alert('Permesso sensori negato. Senza non funziona.');
+            alert('Permesso giroscopio negato. Senza non funziona.');
             return;
           }
         }
@@ -624,24 +712,26 @@
 
     function startSensors() {
       sensorsReady = true;
-      window.addEventListener('deviceorientation', (e) => {
-        if (e.alpha === null) return;
-        currentAlpha = e.alpha;
-        currentBeta = e.beta;
-        if (calibAlpha === null) {
-          calibAlpha = currentAlpha;
-          calibBeta = currentBeta;
-          smoothedX = 0.5; smoothedY = 0.5;
-        }
+      lastMotionTime = null;
+      window.addEventListener('devicemotion', (e) => {
+        const rr = e.rotationRate;
+        if (!rr || rr.alpha === null || rr.alpha === undefined) return;
+        const now = performance.now();
+        if (lastMotionTime === null) { lastMotionTime = now; return; }
+        // Cap dt to 100ms to avoid runaway integration if the tab was backgrounded
+        const dt = Math.min(0.1, (now - lastMotionTime) / 1000);
+        lastMotionTime = now;
+        // rotationRate values are in deg/s (per MDN + iOS Safari implementation)
+        accumYaw   += (rr.gamma || 0) * dt;
+        accumPitch += (rr.beta  || 0) * dt;
+        accumRoll  += (rr.alpha || 0) * dt;
       });
     }
 
     function recalibrate() {
-      if (currentAlpha !== null) {
-        calibAlpha = currentAlpha;
-        calibBeta = currentBeta;
-        smoothedX = 0.5; smoothedY = 0.5;
-      }
+      accumYaw = 0; accumPitch = 0; accumRoll = 0;
+      smoothedX = 0.5; smoothedY = 0.5;
+      lastMotionTime = null;
       recalBtn.style.background = 'rgba(60,200,110,0.4)';
       setTimeout(() => { recalBtn.style.background = ''; }, 250);
     }
@@ -660,29 +750,24 @@
     sprayBtn.addEventListener('mousedown', startSpray);
     window.addEventListener('mouseup', stopSpray);
 
-    // Shortest signed angular diff in [-180, 180]
-    function angleDiff(a, b) {
-      let d = a - b;
-      while (d > 180) d -= 360;
-      while (d < -180) d += 360;
-      return d;
-    }
-
-    // Main loop: compute pose, send frame
+    // Main loop: compute pose from integrated gyro, send frame
     function loop() {
-      if (sensorsReady && calibAlpha !== null && currentAlpha !== null) {
+      if (sensorsReady) {
         const fov = parseFloat(sensitivityEl.value);
-        const dAlpha = angleDiff(currentAlpha, calibAlpha);
-        const dBeta = currentBeta - calibBeta;
+        const sx = invertX ? -1 : 1;
+        const sy = invertY ? -1 : 1;
+        // Default Y source = pitch (beta integrated).
+        // 'useGammaForY' swaps in roll (alpha integrated) — useful if device
+        // axis convention differs from what we expect.
+        const yAngle = useGammaForY ? accumRoll : accumPitch;
 
-        // Mapping: rotating phone right (alpha +) -> x +
-        //          tilting top forward (beta +) -> y - (cursor goes up)
-        let x = 0.5 + dAlpha / fov;
-        let y = 0.5 - dBeta / fov;
+        let x = 0.5 + (sx * accumYaw) / fov;
+        let y = 0.5 - (sy * yAngle)   / fov;
         x = Math.max(0, Math.min(1, x));
         y = Math.max(0, Math.min(1, y));
 
-        const k = 0.35; // low-pass smoothing factor
+        // Light smoothing — gyro is already responsive, don't over-filter
+        const k = 0.55;
         smoothedX += (x - smoothedX) * k;
         smoothedY += (y - smoothedY) * k;
 
