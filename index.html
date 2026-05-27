@@ -313,6 +313,23 @@
 (function() {
   'use strict';
 
+  // Shared PeerJS config: explicit STUN + public TURN for NAT traversal.
+  // Without TURN, peers behind symmetric NAT (typical on cellular or some
+  // routers) cannot establish a direct WebRTC connection.
+  const PEER_CONFIG = {
+    debug: 2,
+    config: {
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:global.stun.twilio.com:3478' },
+        { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+        { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+        { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
+      ]
+    }
+  };
+
   const url = new URL(window.location.href);
   const peerIdParam = url.searchParams.get('peer');
   const isController = !!peerIdParam;
@@ -363,8 +380,9 @@
     window.addEventListener('resize', resize);
 
     // PeerJS
+    statusPill.textContent = 'Registrazione…';
     const peerId = 'graffiti-' + Math.random().toString(36).slice(2, 9);
-    const peer = new Peer(peerId, { debug: 1 });
+    const peer = new Peer(peerId, PEER_CONFIG);
     let activeConn = null;
     let lastPoseTime = 0;
     let crosshairHideTimer = null;
@@ -380,21 +398,32 @@
         colorLight: '#fff',
         correctLevel: QRCode.CorrectLevel.M
       });
+      statusPill.textContent = 'Pronto, attendo telefono…';
+      console.log('[display] registered as', id);
+    });
+
+    peer.on('disconnected', () => {
+      statusPill.textContent = 'Signaling disconnesso, riprovo…';
+      statusPill.classList.add('error');
+      peer.reconnect();
     });
 
     peer.on('error', (err) => {
-      console.error('Peer error:', err);
-      statusPill.textContent = 'Errore: ' + err.type;
+      console.error('[display] peer error:', err);
+      statusPill.textContent = 'Errore: ' + (err.type || err.message || 'sconosciuto');
       statusPill.classList.add('error');
     });
 
     peer.on('connection', (conn) => {
+      console.log('[display] incoming connection from', conn.peer);
       activeConn = conn;
+      statusPill.textContent = 'Telefono trovato, handshake…';
       conn.on('open', () => {
         statusPill.textContent = 'Connesso';
         statusPill.classList.remove('error');
         statusPill.classList.add('connected');
         pairPanel.classList.add('connected');
+        console.log('[display] data channel open');
       });
       conn.on('close', () => {
         statusPill.textContent = 'Disconnesso';
@@ -402,6 +431,11 @@
         pairPanel.classList.remove('connected');
         crosshair.classList.remove('visible');
         if (activeConn === conn) activeConn = null;
+      });
+      conn.on('error', (err) => {
+        console.error('[display] conn error:', err);
+        statusPill.textContent = 'Errore canale: ' + (err.type || err.message);
+        statusPill.classList.add('error');
       });
       conn.on('data', (msg) => {
         if (!msg || typeof msg !== 'object') return;
@@ -515,12 +549,16 @@
     updateSettingDisplays();
 
     // PeerJS
+    statusEl.textContent = 'Registrazione…';
     const myId = 'phone-' + Math.random().toString(36).slice(2, 9);
-    const peer = new Peer(myId, { debug: 1 });
+    const peer = new Peer(myId, PEER_CONFIG);
 
-    peer.on('open', () => {
-      conn = peer.connect(targetPeerId, { reliable: false, serialization: 'json' });
+    peer.on('open', (id) => {
+      console.log('[phone] registered as', id, '— calling', targetPeerId);
+      statusEl.textContent = 'Chiamo computer…';
+      conn = peer.connect(targetPeerId, { reliable: true, serialization: 'json' });
       conn.on('open', () => {
+        console.log('[phone] data channel open');
         statusEl.textContent = 'Connesso';
         statusEl.classList.remove('error');
         statusEl.classList.add('connected');
@@ -530,15 +568,20 @@
         statusEl.classList.remove('connected');
       });
       conn.on('error', (err) => {
-        statusEl.textContent = 'Errore conn';
+        console.error('[phone] conn error:', err);
+        statusEl.textContent = 'Errore: ' + (err.type || err.message || 'canale');
         statusEl.classList.add('error');
-        console.error(err);
       });
     });
-    peer.on('error', (err) => {
-      statusEl.textContent = 'Errore peer';
+    peer.on('disconnected', () => {
+      statusEl.textContent = 'Signaling disconnesso';
       statusEl.classList.add('error');
-      console.error(err);
+      peer.reconnect();
+    });
+    peer.on('error', (err) => {
+      console.error('[phone] peer error:', err);
+      statusEl.textContent = 'Errore: ' + (err.type || err.message || 'peer');
+      statusEl.classList.add('error');
     });
 
     // iOS requires explicit permission for DeviceOrientation
