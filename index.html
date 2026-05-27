@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<title>Air Graffiti</title>
+<title>Air Graffiti v3</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
   html, body { height: 100%; width: 100%; }
@@ -81,6 +81,12 @@
   }
   #status-pill.connected { background: rgba(60, 200, 110, 0.25); color: #6ee5a0; }
   #status-pill.error { background: rgba(220, 80, 80, 0.25); color: #ff8888; }
+  .version-badge {
+    position: fixed; bottom: 10px; right: 14px;
+    font-size: 10px; opacity: 0.35;
+    letter-spacing: 1px; font-family: ui-monospace, Menlo, monospace;
+    pointer-events: none; z-index: 200;
+  }
 
   #display-toolbar {
     position: fixed; bottom: 20px; left: 50%;
@@ -249,6 +255,8 @@
 </head>
 <body>
 
+<div class="version-badge">v3</div>
+
 <!-- ===== DISPLAY (computer) ===== -->
 <div id="display-screen">
   <canvas id="spray-canvas"></canvas>
@@ -379,9 +387,15 @@
     resize();
     window.addEventListener('resize', resize);
 
-    // PeerJS
+    // PeerJS — peer ID persisted in localStorage so reloads don't break the QR
+    console.log('[display] booting v3');
     statusPill.textContent = 'Registrazione…';
-    const peerId = 'graffiti-' + Math.random().toString(36).slice(2, 9);
+    let peerId = null;
+    try { peerId = localStorage.getItem('airGraffitiPeerId'); } catch (e) {}
+    if (!peerId) {
+      peerId = 'graffiti-' + Math.random().toString(36).slice(2, 9);
+      try { localStorage.setItem('airGraffitiPeerId', peerId); } catch (e) {}
+    }
     const peer = new Peer(peerId, PEER_CONFIG);
     let activeConn = null;
     let lastPoseTime = 0;
@@ -549,6 +563,7 @@
     updateSettingDisplays();
 
     // PeerJS
+    console.log('[phone] booting v3, target:', targetPeerId);
     statusEl.textContent = 'Registrazione…';
     const myId = 'phone-' + Math.random().toString(36).slice(2, 9);
     const peer = new Peer(myId, PEER_CONFIG);
